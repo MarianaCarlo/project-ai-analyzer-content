@@ -45,7 +45,7 @@ _(Progressively filled in — see Progress Log for the running rationale; this s
 
 ## Progress Log
 
-### Day 1 — Setup + first Express server
+### Day 1 — Setup + first Express server ✅ 100%
 **Done:**
 - Node.js, Docker, and Git installed and verified
 - Project folder structure created (`backend/`, `frontend/`)
@@ -53,12 +53,14 @@ _(Progressively filled in — see Progress Log for the running rationale; this s
 - Express server running on `localhost:3000`
 - Security middleware active: `helmet`, `cors` (locked to the Vite dev origin), `express-rate-limit` (100 req/15min on `/api/`, sized to protect AI endpoint costs)
 - `/api/health` endpoint working, plus generic 404 and error handlers
+- PostgreSQL running via Docker (`smart_summarizer_db` container)
+- Express connected to Postgres via a `pg` connection pool (`backend/src/db/pool.js`); `/api/health` now reports live DB connectivity
+- Git repo initialized, first commit pushed to GitHub
 
 **Decisions:**
 - Picked PostgreSQL over MongoDB/DynamoDB — see Tech Stack table above.
 - Rate limiting was added at the server level from day one, even before the AI endpoint exists, since AI calls are the main cost driver to protect.
+- Used a `pg.Pool` rather than opening ad-hoc connections, so connections are reused across requests instead of recreated each time.
 
-**Remaining for Day 1:**
-- Run PostgreSQL via Docker
-- Connect the database to Express
-- Initialize git and push the first commit to GitHub
+**Lesson learned:**
+- `dotenv`'s `path` option resolves relative to the process's *current working directory*, not the file calling it. A relative path (`'../.env'`) silently failed to load env vars when run from the project root, causing the DB pool to connect with no credentials. Fixed by anchoring the path to the file itself: `path.join(__dirname, '../.env')`.

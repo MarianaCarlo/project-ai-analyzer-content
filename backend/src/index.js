@@ -2,7 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-require('dotenv').config({ path: '../.env' });
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+const pool = require('./db/pool');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,10 +25,18 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // ── Health check route ───────────────────────────────────
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  let dbStatus = 'unreachable';
+  try {
+    await pool.query('SELECT 1');
+    dbStatus = 'connected';
+  } catch (err) {
+    dbStatus = 'unreachable';
+  }
   res.json({
     status: 'ok',
     message: 'Smart Summarizer API is running',
+    db: dbStatus,
     timestamp: new Date().toISOString()
   });
 });
