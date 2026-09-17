@@ -64,3 +64,17 @@ _(Progressively filled in — see Progress Log for the running rationale; this s
 
 **Lesson learned:**
 - `dotenv`'s `path` option resolves relative to the process's *current working directory*, not the file calling it. A relative path (`'../.env'`) silently failed to load env vars when run from the project root, causing the DB pool to connect with no credentials. Fixed by anchoring the path to the file itself: `path.join(__dirname, '../.env')`.
+
+### Day 2 — Backend: auth + database + routes ✅ 100%
+**Done:**
+- PostgreSQL tables created via per-table migration files (`create_users.sql`, `create_summaries.sql`) applied through `migrate.js`
+- JWT auth: `POST /api/auth/register` (bcrypt-hashed passwords) and `POST /api/auth/login` (issues a signed JWT)
+- Auth middleware (`backend/src/middleware/auth.js`) verifying Bearer tokens and protecting routes
+- Summary routes wired: `POST /api/summaries` and `GET /api/summaries` (both protected), storing/listing rows — actual AI generation is deferred to Day 3
+- Verified the full flow with Postman: register → duplicate check (409) → login → protected route rejected without a token (401) → accepted with a valid token (201/200)
+- Set up DBeaver to visually inspect Postgres tables during development
+
+**Decisions:**
+- Split the schema into per-table SQL files instead of one big `schema.sql`, with explicit file ordering in `migrate.js` (users before summaries) rather than relying on filesystem/alphabetical order, since `summaries` has a foreign key dependency on `users`.
+- Login returns the same generic `"Invalid credentials"` message whether the email doesn't exist or the password is wrong, to avoid leaking which emails are registered (user enumeration).
+- JWTs expire after 1 hour with no refresh-token flow — a deliberate scope trade-off for this timeframe, noted here as a known limitation rather than silently skipped.

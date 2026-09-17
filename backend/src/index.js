@@ -4,6 +4,8 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const pool = require('./db/pool');
+const authRoutes = require('./routes/authRoutes');
+const summaryRoutes = require('./routes/summaryRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +25,10 @@ const limiter = rateLimit({
   message: { error: 'Too many requests, please try again later.' }
 });
 app.use('/api/', limiter);
+
+// ── Auth routes ───────────────────────────────────────────
+app.use('/api/auth', authRoutes);
+app.use('/api/summaries', summaryRoutes);
 
 // ── Health check route ───────────────────────────────────
 app.get('/api/health', async (req, res) => {
