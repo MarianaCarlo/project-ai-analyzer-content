@@ -78,3 +78,21 @@ _(Progressively filled in — see Progress Log for the running rationale; this s
 - Split the schema into per-table SQL files instead of one big `schema.sql`, with explicit file ordering in `migrate.js` (users before summaries) rather than relying on filesystem/alphabetical order, since `summaries` has a foreign key dependency on `users`.
 - Login returns the same generic `"Invalid credentials"` message whether the email doesn't exist or the password is wrong, to avoid leaking which emails are registered (user enumeration).
 - JWTs expire after 1 hour with no refresh-token flow — a deliberate scope trade-off for this timeframe, noted here as a known limitation rather than silently skipped.
+
+### Day 3 — AI layer: Anthropic integration ✅ 100%
+**Done:**
+- Versioned prompt template (`prompts/summarize.v1.js`) defining the system prompt, model, and max tokens
+- PromptBuilder wraps user input in `<user_content>` delimiters as a first-layer prompt-injection defense
+- Provider abstraction (`modelInvoker.js`) with swappable providers — `anthropicProvider.js` (real Claude Haiku call via tool-calling) and `mockProvider.js` (free, instant, for dev/testing) — switched via the `LLM_PROVIDER` env var
+- Structured output enforced via Anthropic tool-calling, forcing the model to return `summary`/`category`/`confidence` in a fixed schema — this also acts as a second layer of injection defense, since the output can't deviate into arbitrary free-form behavior
+- ResponseProcessor validates/cleans the model's output, clamping confidence to [0,1] and falling back to a safe default if the schema is ever violated
+- Wired into `POST /api/summaries`: the full pipeline (buildPrompt → modelInvoker → processResponse → DB save) now runs live
+- Verified end-to-end with both the mock provider (free/instant) and the real Anthropic API (real Claude Haiku call, correct summary + classification returned)
+
+**Decisions:**
+- Chose Claude Haiku over Sonnet/Opus for this task — cost-conscious model selection matched to task complexity, since summarize+classify doesn't need heavier reasoning.
+- Combined the "provider abstraction" and "structured output" steps into one implementation, since tool-calling schemas are inherently provider-specific request details.
+- Prompt-injection defense is layered rather than relying on one trick: delimited input + explicit system instructions (layer 1), plus schema-constrained output via tool-calling (layer 2).
+
+**Lesson learned:**
+- `nodemon` does not watch `.env` files by default (only `.js`/`.json`), so changing an environment variable requires manually restarting the dev server — a silent gotcha that can make it look like a config change "didn't work."
