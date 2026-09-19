@@ -96,3 +96,19 @@ _(Progressively filled in — see Progress Log for the running rationale; this s
 
 **Lesson learned:**
 - `nodemon` does not watch `.env` files by default (only `.js`/`.json`), so changing an environment variable requires manually restarting the dev server — a silent gotcha that can make it look like a config change "didn't work."
+
+### Day 4 — Frontend: React app ✅ 100%
+**Done:**
+- Scaffolded a React app with Vite (JavaScript, ESLint)
+- `react-router-dom` for client-side routing across 3 pages: Login, Input, Results
+- Axios client (`api/client.js`) with a request interceptor that automatically attaches the JWT to every call
+- `LoginPage`: authenticates against `POST /api/auth/login`, stores the token in `localStorage`
+- `InputPage`: submits text to `POST /api/summaries`, displays the AI result, with loading/error states, an "AI-generated — verify" disclaimer, and a "Summarize another" re-ask action
+- `ResultsPage`: fetches `GET /api/summaries`, with loading/error/empty states, listing all past summaries newest-first
+- `ProtectedRoute` wrapper redirects unauthenticated users to `/login` — a UX convenience only; real security enforcement remains server-side via the Day 2 auth middleware
+- Verified the full flow end-to-end in the browser: login → submit → real AI-generated summary → visible in the Results list, tested against both the mock and real Anthropic providers
+
+**Decisions:**
+- No dedicated register page in the UI — the existing `POST /api/auth/register` endpoint was used directly via Postman to create the test account, a deliberate scope simplification given the time budget.
+- Auth state kept minimal: a single JWT in `localStorage`, rather than a full state-management library — appropriate for an app this size with only 3 pages.
+- Styling kept close to default — the assessment explicitly states design quality is secondary to usability and clarity, so time was spent on functionality (loading/error/empty states, AI-aware UX) rather than visual polish.
