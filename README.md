@@ -112,3 +112,16 @@ _(Progressively filled in — see Progress Log for the running rationale; this s
 - No dedicated register page in the UI — the existing `POST /api/auth/register` endpoint was used directly via Postman to create the test account, a deliberate scope simplification given the time budget.
 - Auth state kept minimal: a single JWT in `localStorage`, rather than a full state-management library — appropriate for an app this size with only 3 pages.
 - Styling kept close to default — the assessment explicitly states design quality is secondary to usability and clarity, so time was spent on functionality (loading/error/empty states, AI-aware UX) rather than visual polish.
+
+### Day 5 — Connect everything + Docker ✅ 100%
+**Done:**
+- Dockerized the backend (`backend/Dockerfile`) — Node 20 Alpine image, dependencies installed in a cached layer before copying app code
+- Added a `.dockerignore` to prevent baking `backend/.env` (and `node_modules`, `frontend`, `.git`) into the image — secrets are injected at container runtime via `docker-compose`'s `env_file`, never baked into image layers
+- Extended `docker-compose.yml` with a `backend` service, building from the new Dockerfile and depending on `postgres`
+- Fixed Docker networking: overrode `DB_HOST` to `postgres` (the service name) specifically for the containerized backend, since `localhost` means something different inside a container than on the host machine
+- Verified the full stack running via `docker compose up -d --build`: health check reports `db: connected`, and the complete login → summarize → results flow works identically through both the React frontend and Postman — confirming the backend's containerization is fully transparent to any client reaching it via the host's port mapping
+
+**Decisions:**
+- Removed the obsolete `version: '3.8'` line from `docker-compose.yml` while editing it (flagged back on Day 1, addressed now)
+- `depends_on: postgres` only guarantees container *start order*, not that Postgres is actually *ready* to accept connections — a known limitation; a production setup would add a proper health check instead
+- The frontend was intentionally left un-Dockerized, per the assessment's explicit "frontend optional" allowance for containerization, prioritizing time on the backend + AI layer instead
