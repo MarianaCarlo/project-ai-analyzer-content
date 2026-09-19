@@ -37,11 +37,154 @@ All three example use cases from the brief were considered:
 
 ## Getting Started
 
-_(Filled in as each piece comes online — see Progress Log.)_
+### Prerequisites
+- Node.js 20+
+- Docker Desktop
+- An Anthropic API key ([console.anthropic.com](https://console.anthropic.com))
+
+### 1. Clone and install dependencies
+```
+git clone <repo-url>
+cd proyect-ai-analyzer-content
+npm install
+cd frontend && npm install && cd ..
+```
+
+### 2. Configure environment variables
+Create `backend/.env` with:
+```
+PORT=3000
+JWT_SECRET=<a random string>
+ANTHROPIC_API_KEY=<your key>
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=admin
+DB_PASSWORD=admin123
+DB_NAME=smart_summarizer
+LLM_PROVIDER=mock
+```
+(`LLM_PROVIDER=mock` avoids any API cost during setup; switch to `anthropic` once you're ready to test real AI calls.)
+
+### 3. Start Postgres
+```
+docker compose up -d postgres
+```
+
+### 4. Run the database migrations
+```
+node backend/src/db/migrate.js
+```
+
+### 5. Start the backend
+```
+npm run dev
+```
+Runs on `http://localhost:3000`. (Alternatively, run `docker compose up -d --build` instead of steps 3 and 5 together, to run the backend containerized too — see the Day 5 log for details on that option.)
+
+### 6. Start the frontend
+```
+cd frontend
+npm run dev
+```
+Runs on `http://localhost:5173`.
+
+### 7. Create an account and try it
+There's no register page in the UI (see Day 4 decisions) — create a test account directly:
+```
+curl -X POST http://localhost:3000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@test.com","password":"test1234"}'
+```
+Then open `http://localhost:5173`, log in with those credentials, and submit some text to summarize.
 
 ## Architecture Decisions
 
-_(Progressively filled in — see Progress Log for the running rationale; this section will summarize the final state.)_
+**System overview:**
+```
+React (Vite) SPA  →  Express REST API  →  PostgreSQL (persistence)
+                              ↓
+                        AI Layer (provider-abstracted)  →  Anthropic API (Claude Haiku)
+```
+JWT-based auth protects every route except `/api/health`, `/api/auth/register`, and `/api/auth/login`.
+
+**Backend structure:**
+```
+backend/src/
+  routes/          → HTTP endpoints, validation only
+  controllers/     → request orchestration
+  middleware/      → JWT auth, rate limiting, security headers
+  db/              → connection pool + versioned schema migrations
+  services/ai/     → the AI layer, isolated by concern:
+    prompts/            → versioned prompt templates
+    promptBuilder.js    → prompt construction
+    modelInvoker.js     → model invocation, provider-agnostic
+    providers/           → anthropicProvider.js (real) / mockProvider.js (free/instant)
+    responseProcessor.js → response validation/post-processing
+```
+This structure directly satisfies the assessment's requirement for "clear separation between prompt construction / model invocation / response post-processing," and the provider abstraction satisfies "ability to switch LLM providers."
+
+**Key decisions** (condensed from the day-by-day log below — see that log for full reasoning and order):
+- PostgreSQL over MongoDB/DynamoDB for local development — relational data (users, summaries, audit metadata) benefits from schema constraints; SQL experience transfers directly.
+- Node.js/Express over Spring Boot — explicitly preferred by the assessment brief, and matches existing JavaScript experience.
+- JWT auth with bcrypt-hashed passwords, 1-hour token expiry, no refresh-token flow (a deliberate scope trade-off).
+- Claude Haiku via direct Anthropic API (not Bedrock) — cheapest model adequate for summarize+classify, chosen explicitly for cost control.
+- Structured output via Anthropic tool-calling rather than free-text parsing — improves reliability and doubles as a second layer of prompt-injection defense.
+- Defense-in-depth against prompt injection: delimited user input + explicit system instructions (layer 1), schema-constrained output (layer 2).
+- Client-side route protection (React) is UX only — all real authorization is enforced server-side, since client-side code can never be trusted.
+- Backend containerized with Docker; frontend intentionally left un-containerized (explicitly optional per the assessment brief).
+
+## Data Flow & Storage
+
+**What we store:**
+- User accounts — email and a bcrypt password hash (never the plaintext password)
+- Summaries — the original `input_text`, the AI-generated summary, the classification (category + confidence, as JSON), and audit metadata (`prompt_version`, `model`, `tokens_used`, `created_at`), tied to the user who created it
+
+**What we don't store:**
+- Plaintext passwords — only bcrypt hashes ever touch the database
+- API keys in the database — the Anthropic key lives only in environment configuration (`.env` locally; Secrets Manager in the AWS plan below), never in application data
+- Full request/response logs at rest — error logs capture stack traces on failure, but prompt/response bodies are never written to logs
+
+**Retention:**
+- This prototype has no automatic expiration — summaries persist indefinitely. For production, a real retention policy (e.g., purge or anonymize summaries older than 90 days) and a user-triggered deletion endpoint (a "right to erasure" control) would be added — named here as a known limitation rather than silently skipped.
+
+**PII:**
+- Since users can paste arbitrary text, submitted content may contain PII, and this prototype does not detect or redact it before storage. For production: redact common PII patterns before persisting/logging, and/or encrypt the `input_text` column at rest (e.g., Postgres `pgcrypto`, or AWS KMS in the DynamoDB plan below).
+
+**Logging:**
+- Errors are logged with stack traces on failure, but full request bodies and AI responses are never logged at the info level — deliberately, to avoid accidentally persisting sensitive user content in log files. No centralized logging pipeline (e.g., CloudWatch) was built for this prototype.
+
+**Auditability:**
+- Every summary row records exactly which `prompt_version` and `model` produced it, plus token usage — so any past result is traceable to the exact configuration that generated it, supporting reproducibility and "why did the AI say this" debugging.
+
+**Bonus sections (vector store / RAG):** intentionally not built — the chosen use case (summarize + classify a single submission) doesn't involve retrieval over a document corpus, so this was a deliberately declined bonus rather than a gap, in favor of spending the time budget on the required core pieces instead.
+
+## AI Evaluation & Reliability
+
+**Measuring output quality:** build a small "golden set" of 15–20 representative sample inputs spanning each category, with a manually-agreed expected summary/classification for each. Re-run this set (manually, or via an LLM-as-judge approach — having Claude score a candidate output against the expected one on a rubric of accuracy, conciseness, and correct category) whenever the prompt or model changes, rather than relying on informal spot-checks.
+
+**Detecting regressions after a prompt/model change:** every prompt is versioned (`prompts/summarize.v1.js`, `v2`, etc.), and every stored summary records exactly which `prompt_version` and `model` produced it. A new prompt version would be run against the golden set *before* being promoted, and its scores compared directly against the previous version's — a regression shows up as a measurable score drop, not something discovered later from a user complaint.
+
+**Handling "AI gives a wrong answer" in production:**
+- The disclaimer already built into the Input page ("AI-generated — verify important details") sets honest expectations rather than implying certainty.
+- `responseProcessor.js`'s schema validation with a labeled fallback (see Day 3) prevents obviously malformed output from ever being silently presented as normal.
+- A feedback control (thumbs up/down or "report incorrect") isn't built in this prototype — named here as a clear next step — but the `prompt_version`/`model` recorded on every row already means any reported bad output can be traced back to exactly which configuration produced it, rather than being an unexplainable one-off.
+
+## Cloud & Runtime (AWS Plan)
+
+Given the 1-week assessment timeframe, this section documents an infrastructure **plan**, written as real Terraform (see `terraform/main.tf`), rather than a live deployment — a deliberate choice given the assessment's explicit "mock if preferred" allowance, and given that real deployment/debugging time and small ongoing AWS costs weren't justified for a demo of this scope.
+
+**Target architecture:**
+```
+API Gateway → Lambda (Express app via a Lambda adapter) → DynamoDB (users, summaries)
+                                    ↓
+                          Secrets Manager (Anthropic API key, JWT secret)
+```
+
+**Where AI API keys live:** in AWS Secrets Manager, fetched by the Lambda function at runtime rather than set as a plain Lambda environment variable. Environment variables are visible to anyone with read access to the Lambda's configuration in the AWS console; Secrets Manager adds access control and audit logging (via CloudTrail) on top.
+
+**How we'd rotate them:** Secrets Manager supports scheduled automatic rotation via a rotation Lambda for AWS-native credentials (e.g., RDS passwords). Anthropic keys have no native AWS rotation integration, so rotation would be a manual/periodic process: generate a new key in the Anthropic console, update the secret's value — any Lambda invocation after that automatically picks up the new value on its next fetch, with no redeployment needed, since the key is never baked into deployed code.
+
+**How we'd scale under bursty AI usage:** Lambda scales horizontally per-request automatically — a burst of 100 simultaneous requests spins up (up to account/region limits) 100 parallel executions rather than queueing behind a fixed pool of servers, a natural fit for unpredictable AI traffic. The real constraint to manage is Lambda's account-level concurrency limit and Anthropic's own API rate limits — a request queue (e.g., SQS) in front of Lambda would be added if traffic ever approached either limit, to smooth bursts rather than drop requests.
 
 ## Progress Log
 
@@ -125,3 +268,16 @@ _(Progressively filled in — see Progress Log for the running rationale; this s
 - Removed the obsolete `version: '3.8'` line from `docker-compose.yml` while editing it (flagged back on Day 1, addressed now)
 - `depends_on: postgres` only guarantees container *start order*, not that Postgres is actually *ready* to accept connections — a known limitation; a production setup would add a proper health check instead
 - The frontend was intentionally left un-Dockerized, per the assessment's explicit "frontend optional" allowance for containerization, prioritizing time on the backend + AI layer instead
+
+### Day 6 — README + architecture decisions ✅ 100%
+**Done:**
+- Consolidated the "Architecture Decisions" section into a coherent system-level summary (previously just a placeholder pointing at this log)
+- Wrote "Data Flow & Storage" (assessment Part 2.1): what's stored/not stored, retention, PII, logging, auditability
+- Wrote "AI Evaluation & Reliability" (Part 2.2): quality measurement via a golden set, regression detection via prompt versioning, handling wrong answers in production
+- Wrote "Cloud & Runtime" (Part 3.1) plus a full `terraform/main.tf` documenting a target AWS deployment (API Gateway + Lambda + DynamoDB + Secrets Manager) — written as infrastructure-as-code but not applied against a real account, per the assessment's explicit "mock if preferred" allowance
+- Completed "Getting Started" with real, step-by-step local setup instructions (previously a placeholder)
+
+**Decisions:**
+- Pivoted the AWS target architecture from an initially-proposed ECS/RDS/ALB setup to a serverless Lambda/API Gateway/DynamoDB one, specifically to align with real hands-on AWS experience (Lambda, API Gateway, DynamoDB, S3) rather than services used for the first time in this project — a deliberate choice to demonstrate genuine familiarity rather than unfamiliar textbook services.
+- Chose not to deploy real AWS infrastructure given the remaining time budget and the assessment's explicit permission to mock this section; the Terraform file stands as a concrete, reviewable plan instead.
+- DynamoDB (rather than RDS/Postgres) was chosen specifically for the AWS target, since it's one of the three explicitly-approved database options in the assessment brief and pairs naturally with Lambda's pay-per-use billing model.
